@@ -10,6 +10,7 @@ import ARKit
 import RealityKit
 import os
 
+
 extension Float {
     var degreesToRadians: Float {
         return self * .pi / 180
@@ -37,6 +38,48 @@ extension SIMD4 {
     /// Retrieves first 3 elements
     var xyz: SIMD3<Scalar> {
         self[SIMD3(0, 1, 2)]
+    }
+}
+
+struct PlaneLockComponent: Component {
+    var isPlaneLocked: Bool = false
+}
+
+//extension Entity {
+//    /// Simple boolean interface backed by the presence of PlaneLockComponent
+//    var isPlaneLocked: Bool {
+//        get {
+//            return self.components[PlaneLockComponent.self] != nil
+//        }
+//        set {
+//            if newValue {
+//                // Ensure the component exists to mark as locked
+//                if self.components[PlaneLockComponent.self] == nil {
+//                    self.components.set(PlaneLockComponent())
+//                }
+//            } else {
+//                // Remove the component to mark as unlocked
+//                self.components.remove(PlaneLockComponent.self)
+//            }
+//        }
+//    }
+//}
+
+extension Entity {
+    var isPlaneLocked: Bool {
+        get {
+            components[PlaneLockComponent.self]?.isPlaneLocked ?? false
+        }
+        set {
+            if var comp = components[PlaneLockComponent.self] {
+                comp.isPlaneLocked = newValue
+                components.set(comp)
+            } else if newValue {
+                components.set(PlaneLockComponent(isPlaneLocked: true))
+            } else {
+                components.remove(PlaneLockComponent.self)
+            }
+        }
     }
 }
 
@@ -196,3 +239,11 @@ extension simd_quatf {
         return SIMD3<Float>(pitch, yaw, roll)
     }
 }
+
+extension AnchorEntity {
+    var planeAnchorLocked: Bool {
+        get { self.isPlaneLocked }
+        set { self.isPlaneLocked = newValue }
+    }
+}
+
