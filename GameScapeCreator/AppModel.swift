@@ -24,6 +24,7 @@ class AppModel {
         case open
     }
     var immersiveSpaceState = ImmersiveSpaceState.closed
+    var isPlaneLocked: Bool = false
     
     // Plane Detection is provided via an ARKitSession configured with a PlaneDetectionProvider
     private let session = ARKitSession()
@@ -33,6 +34,8 @@ class AppModel {
     @MainActor var planeAnchors: [UUID: PlaneAnchor] = [:]
     @MainActor var entityMap: [UUID: Entity] = [:]
     @MainActor var currentFloorPlane: ModelEntity?
+
+    @MainActor var planeModelEntityMap: [String: ModelEntity] = [:]
     
     // Root entity for all app content: plane detection the entities associated with planes
     private let contentRoot = Entity()
@@ -46,12 +49,36 @@ class AppModel {
     // Entities of the current rendered plane, possible planes to render, and the collider plane from raycasting
     private var currentRenderedPlane: ModelEntity?
     private var currentColliderPlane: ModelEntity?
-    private var wallEntryEntity: ModelEntity? // unclear what this is needed for at the moment
     
     // Basic Materials
     private let whiteMaterial = SimpleMaterial(color: .white, roughness: 0.5, isMetallic: false)
     private let blueMaterial = SimpleMaterial(color: .blue, roughness: 0.5, isMetallic: false)
     private let occlusionMaterial = OcclusionMaterial()
+    
+    // list of tile ModelEntities and whether or not they've been successfully loaded
+    var planeGridTiles: [ModelEntity] = []
+    var areGridTilesLoaded: Bool = false
+    
+    // size of the mazing generation tiles and distance between each to show grid
+    var tileSize: Float = 0.13
+    var spacingDistance: Float = 0.005
+    
+    // boolean value switched for plane pinch recognition
+    var hasBeenPinched: Bool = false {
+        didSet {
+            guard let plane = currentRenderedPlane else {
+                print("Could not find a rendered plane for relative positioning.")
+                return
+            }
+            if hasBeenPinched == true {
+                print("didSet true path")
+                plane.model?.materials = [blueMaterial]
+            } else if hasBeenPinched == false {
+                print("didSet false path")
+                plane.model?.materials = [whiteMaterial]
+            }
+        }
+    }
     
     @MainActor
     init() {
@@ -80,13 +107,9 @@ class AppModel {
     func processPlaneDetectionUpdates() async {
         for await anchorUpdate in planeData.anchorUpdates {
             let anchor = anchorUpdate.anchor
-            
-            // Skip planes that are not vertical and are not classified as floor
-            if anchor.alignment == .horizontal {
+            if anchor.surfaceClassification == .ceiling || anchor.surfaceClassification == .floor || anchor.alignment == .vertical {
                 continue
             }
-            
-            print("Anchor alignments \(anchor.alignment)")
                 
             switch anchorUpdate.event {
             case .added, .updated:
@@ -99,9 +122,9 @@ class AppModel {
     
     @MainActor
     func updatePlane(_ anchor: PlaneAnchor) async {
-//        guard !isPlaneLocked else {
-//            return
-//        }
+        // guard !isPlaneLocked else {
+        //     return
+        // }
         
         // get anchor geometry and create a mesh and add material
         let anchorGeometry = anchor.geometry
@@ -117,9 +140,7 @@ class AppModel {
             return
         }
         planeEntity.collision = CollisionComponent(shapes: [shape], isStatic: true)
-        planeEntity.components.set(InputTargetComponent())
-        planeEntity.components.set(HoverEffectComponent())
-        planeEntity.name = anchor.surfaceClassification.description
+        planeEntity.name = "\(anchor.id)_plane"
         
         guard let planeEntityBounds = planeEntity.model?.mesh.bounds else {
             print("Error: ModelEntity does not have a valid bounding box.")
@@ -140,31 +161,39 @@ class AppModel {
             colliderPlanesRoot.addChild(planeEntity)
             renderPlanesRoot.addChild(planeEntity)
         } else {
-            planeEntity.model?.materials = [blueMaterial]
-            EntityUtils.addGridLines(
-                to: planeEntity,
-                lineColor: UIColor.green.withAlphaComponent(0.4)
-            )
+            // do not updatePlane once a render plane has been generated and locked
+//            if planeModelEntityMap["\(anchor.id)_plane"] != nil {
+//                if planeModelEntityMap["\(anchor.id)_plane"]?.isPlaneLocked == true {
+//                    return
+//                }
+//            }
             
             entityMap[anchor.id] = planeEntity
             currentColliderPlane = planeEntity
             colliderPlanesRoot.addChild(planeEntity)
-            renderPlanesRoot.addChild(planeEntity)
         }
     }
     
     // Removes a plane from the entityMap and the planeAnchors
     @MainActor
     func removePlane(_ anchor: PlaneAnchor) async {
-        // skips removePlane on floor plane
-//        if anchor.surfaceClassification == .floor {
-//            return
-//        } else {
-        entityMap[anchor.id]?.removeFromParent()
-        entityMap.removeValue(forKey: anchor.id)
-        planeAnchors.removeValue(forKey: anchor.id)
-        return
-//        }
+        let anchorPlaneName = "\(anchor.id)_plane"
+        
+        if let aPN = planeModelEntityMap[anchorPlaneName] {
+            if aPN.isPlaneLocked == true {
+                print("could not remove \(anchor.id) because it is locked")
+                return
+            } else {
+                entityMap[anchor.id]?.removeFromParent()
+                entityMap.removeValue(forKey: anchor.id)
+                planeAnchors.removeValue(forKey: anchor.id)
+                return
+            }
+        }
+//        entityMap[anchor.id]?.removeFromParent()
+//        entityMap.removeValue(forKey: anchor.id)
+//        planeAnchors.removeValue(forKey: anchor.id)
+//        return
     }
     
     /// Raycasts from the device position to find the nearest vertical plane.
@@ -197,39 +226,291 @@ class AppModel {
     }
     
     /// Returns true if the new centroid is far enough from the last to warrant an update.
-//    private func shouldUpdatePlane(newCentroid: SIMD3<Float>) -> Bool {
-//        if let lastCentroid = lastPlaneCentroid {
-//            if distance(newCentroid, lastCentroid) < 0.5 {
-//                return false
-//            }
-//        }
-//        return true
-//    }
+    private func shouldUpdatePlane(newCentroid: SIMD3<Float>, lastPlaneCentroid: SIMD3<Float>) -> Bool {
+        if distance(newCentroid, lastPlaneCentroid) < 0.5 {
+            return false
+        } else {
+            return true
+        }
+    }
     
     @MainActor
     /// Updates the plane in front of the person when a plane isn't in a selected state.
     func updateFacingPlane() {
-//        guard !isPlaneLocked else { return }
+        guard !isPlaneLocked else { return }
         
         guard let hitEntity = raycastForFacingPlane() else { return }
-        hitEntity.name = "currentRenderedPlane"
+        // hitEntity.name = "currentRenderedPlane"
         
         if let floorPlane = currentFloorPlane {
             renderPlanesRoot.addChild(floorPlane)
         }
         
+        // this check prevents plane updates from "unlocking" planes
+        // by drawing a new plane over it/resetting planeLock and materials
+        if planeModelEntityMap[hitEntity.name] != nil {
+            return
+        }
+        
         hitEntity.generateCollisionShapes(recursive: false, static: true)
-        hitEntity.model?.materials = [occlusionMaterial]
+        hitEntity.components.set(InputTargetComponent())
+        hitEntity.components.set(HoverEffectComponent())
+        hitEntity.isPlaneLocked = false
+        hitEntity.model?.materials = [whiteMaterial]
         
-//        guard var planeCenter = EntityUtils.getCenterMiddlePoint(of: hitEntity) else { return }
-//        let centroidGlobalPosition = hitEntity.convert(position: planeCenter, to: nil)
+        // Render planes in front of the user, removing any previously rendered unlocked planes
+        renderPlanesRoot.children.forEach { child in
+            if child.isPlaneLocked == false {
+                planeModelEntityMap[child.name]?.removeFromParent()
+                planeModelEntityMap.removeValue(forKey: child.name)
+            }
+        }
         
-//        guard shouldUpdatePlane(newCentroid: centroidGlobalPosition) else { return }
-//        lastPlaneCentroid = centroidGlobalPosition
-        
-        // Switch to the new plane
-//        renderPlanesRoot.children.removeAll()
+        planeModelEntityMap[hitEntity.name] = hitEntity
         renderPlanesRoot.addChild(hitEntity)
-        currentRenderedPlane = hitEntity
+    }
+
+    // func to call from ImmersiveView when the user pinches a plane to lock it in place
+    @MainActor
+    func toggleRenderPlaneLock(string: String) {
+        // something
+        if let plane = planeModelEntityMap[string] {
+            plane.isPlaneLocked = !plane.isPlaneLocked
+            if plane.isPlaneLocked == true {
+                plane.model?.materials = [blueMaterial]
+            } else {
+                plane.model?.materials = [whiteMaterial]
+            }
+        }
+    }
+    
+    @MainActor
+    func providePlaneCentroidPosition() -> (position: SIMD3<Float>, rotation: simd_quatf)? {
+        // Extract the rotation of the device for viewer facing attachment
+        let deviceAnchor = worldTracking.queryDeviceAnchor(atTimestamp: CACurrentMediaTime())
+        guard let deviceAnchor, deviceAnchor.isTracked == true else {
+            return nil
+        }
+        let deviceAnchorTransform = deviceAnchor.originFromAnchorTransform
+        let rotation = simd_quatf(deviceAnchorTransform.rotation)
+        
+        // Ensure we have a rendered plane
+        guard let plane = currentRenderedPlane else {
+            return nil
+        }
+        
+        let position: SIMD3<Float>
+        if let centroid = plane.centroid {
+            position = plane.convert(position: centroid, to: nil)
+        } else {
+            position = SIMD3<Float>(0, 0, 0)
+        }
+        
+        // returns plane centroid location and headset rotation
+        return (position, rotation)
+    }
+    
+    // Function to check if two entities' bounding boxes overlap
+    func checkBoundingBoxOverlap(planeEntity: ModelEntity, cubeEntity: ModelEntity) -> Bool {
+        let planeBounds = planeEntity.visualBounds(relativeTo: nil)
+        let cubeBounds = cubeEntity.visualBounds(relativeTo: nil)
+        
+        return planeBounds.intersects(cubeBounds)
+    }
+    
+    /// Fills the current locked plane with cubes.
+    func fillCurrentPlaneWithCubes() {
+        guard let currentPlane = currentRenderedPlane else {
+            logger.error("Failed to get the current rendered plane")
+            return
+        }
+        
+        fillPlaneVerticesWithCubes(planeEntity: currentPlane)
+        fillPlaneWithGrid(planeEntity: currentPlane, cubeSize: tileSize)
+        
+        areGridTilesLoaded = true
+    }
+    
+    func fillPlaneVerticesWithCubes(planeEntity: ModelEntity, cubeSize: Float = 0.1) {
+        print("fillPlaneVerticesWithCubes called")
+        
+        // Retrieve all vertices from the planeEntity
+        guard let vertices = planeEntity.allVertices else {
+            print("Error: Could not retrieve vertices from planeEntity.")
+            return
+        }
+        
+        // Iterate over the vertices and place cubes
+        for vertex in vertices {
+            print("Vertex position: \(vertex)")
+            
+            // Create a new cube entity
+            let cubeMesh = MeshResource.generateBox(size: cubeSize)
+            let cubeMaterial = SimpleMaterial(color: .green, isMetallic: false)
+            let cubeEntity = ModelEntity(mesh: cubeMesh, materials: [cubeMaterial])
+            
+            // Set the cube's position to the current vertex
+            let globalPosition = planeEntity.convert(position: vertex, to: nil)
+            cubeEntity.position = globalPosition
+            
+            // Add the cube to the scene
+            renderPlanesRoot.addChild(cubeEntity)
+        }
+        
+        print("Finished placing cubes at plane vertices.")
+    }
+    
+    func fillPlaneWithGrid(planeEntity: ModelEntity, cubeSize: Float = 0.1) {
+        print("fillPlaneWithGrid called")
+        
+        let gridPoints = generateGridPoints(for: planeEntity, cubeSize: cubeSize, spacing: spacingDistance)
+        
+        if gridPoints.isEmpty {
+            print("No grid points were generated. Ensure the planeEntity's vertices are valid.")
+            return
+        }
+        
+        // Iterate over the grid points and place cubes
+        for point in gridPoints {
+            let tileEntity = createTileAndWalls(width: cubeSize, height: 0.013, depth: cubeSize, wallThickness: 0.002, color: .blue)
+            
+            // Set the cube's position to the current vertex
+            let globalPosition = planeEntity.convert(position: point, to: nil)
+            tileEntity.position = globalPosition
+            
+            // orients the tile identical to the plane for grid consistency
+            guard let planeToDrawOn = currentColliderPlane else {
+                print("currentColliderPlane is nil.")
+                return
+            }
+            tileEntity.orientation = planeToDrawOn.orientation
+            
+            // Add the cube to the scene
+            renderPlanesRoot.addChild(tileEntity)
+            
+            // Add the tile to the planeGridTiles array
+            planeGridTiles.append(tileEntity)
+        }
+        
+        print("Finished placing cubes at plane vertices.")
+    }
+    
+    func generateGridPoints(for planeEntity: ModelEntity, cubeSize: Float = 0.1, spacing: Float = 0.0254) -> [SIMD3<Float>] {
+        print("generateGridPoints called")
+        
+        // Ensure we have all vertices
+        guard let vertices = planeEntity.allVertices else {
+            print("Error: Could not retrieve vertices from planeEntity.")
+            return []
+        }
+        
+        // Extract the bounds from the vertices
+        let minX = vertices.map { $0.x }.min() ?? 0
+        let maxX = vertices.map { $0.x }.max() ?? 0
+        let minZ = vertices.map { $0.z }.min() ?? 0
+        let maxZ = vertices.map { $0.z }.max() ?? 0
+        let fixedY = vertices.first?.y ?? 0 // All Y values should be the same in this 2D shape
+        
+        // Adjust spacing to include cube size
+        let adjustedSpacing = cubeSize + spacing
+        
+        // Generate a grid of points within the bounds
+        var gridPoints: [SIMD3<Float>] = []
+        var currentZ = minZ
+        while currentZ <= maxZ {
+            var currentX = minX
+            while currentX <= maxX {
+                let point = SIMD3<Float>(currentX, fixedY, currentZ)
+                
+                // Check if the point is inside the polygon defined by the vertices
+                if isPointInsidePolygon(point, vertices: vertices) {
+                    gridPoints.append(point)
+                }
+                
+                currentX += adjustedSpacing
+            }
+            currentZ += adjustedSpacing
+        }
+        
+        print("Generated \(gridPoints.count) grid points.")
+        return gridPoints
+    }
+    
+    /// Check if a 2D point (ignoring Y) is inside a polygon defined by vertices
+    func isPointInsidePolygon(_ point: SIMD3<Float>, vertices: [SIMD3<Float>]) -> Bool {
+        var isInside = false
+        let n = vertices.count
+        var j = n - 1
+        
+        for i in 0..<n {
+            let vi = vertices[i]
+            let vj = vertices[j]
+            
+            if ((vi.z > point.z) != (vj.z > point.z)) &&
+                (point.x < (vj.x - vi.x) * (point.z - vi.z) / (vj.z - vi.z) + vi.x) {
+                isInside.toggle()
+            }
+            j = i
+        }
+        
+        return isInside
+    }
+    
+    func createTile(width: Float, height: Float, depth: Float, color: UIColor = .blue) -> ModelEntity {
+        let tileMesh = MeshResource.generateBox(width: width, height: height, depth: depth)
+        let tileMaterial = SimpleMaterial(color: color, isMetallic: false)
+        let tileEntity = ModelEntity(mesh: tileMesh, materials: [tileMaterial])
+//        tileEntity.mazeVisit = MazeVisitComponent(visited: false)
+        return tileEntity
+    }
+    
+    func createTileAndWalls(width: Float, height: Float, depth: Float,
+                    wallThickness: Float = 0.05, color: UIColor = .blue,
+                    wallColor: UIColor = .gray) -> ModelEntity {
+        // Create the base tile
+        let tileMesh = MeshResource.generateBox(width: width, height: height, depth: depth)
+        let tileMaterial = SimpleMaterial(color: color, isMetallic: false)
+        let tileEntity = ModelEntity(mesh: tileMesh, materials: [tileMaterial])
+//        tileEntity.mazeVisit = MazeVisitComponent(visited: false)
+
+        // Define wall dimensions
+        let wallHeight = height + wallThickness // Slightly taller than the tile
+        let wallDepth = wallThickness           // Thickness of walls
+
+        // Create wall meshes and material
+        let wallMesh = MeshResource.generateBox(width: width, height: wallHeight, depth: wallDepth)
+        let wallMaterial = SimpleMaterial(color: wallColor, isMetallic: false)
+
+        // Define wall positions (relative to tile center)
+        let halfWidth = width / 2
+        let halfDepth = depth / 2
+
+        // Top Wall
+        let topWall = ModelEntity(mesh: wallMesh, materials: [wallMaterial])
+        topWall.position = [0, wallHeight / 2, -halfDepth - wallDepth / 2]
+        topWall.name = "TopWall"
+        tileEntity.addChild(topWall)
+
+        // Bottom Wall
+        let bottomWall = ModelEntity(mesh: wallMesh, materials: [wallMaterial])
+        bottomWall.position = [0, wallHeight / 2, halfDepth + wallDepth / 2]
+        bottomWall.name = "BottomWall"
+        tileEntity.addChild(bottomWall)
+
+        // Left Wall
+        let leftWallMesh = MeshResource.generateBox(width: wallDepth, height: wallHeight, depth: depth)
+        let leftWall = ModelEntity(mesh: leftWallMesh, materials: [wallMaterial])
+        leftWall.position = [-halfWidth - wallDepth / 2, wallHeight / 2, 0]
+        leftWall.name = "LeftWall"
+        tileEntity.addChild(leftWall)
+
+        // Right Wall
+        let rightWallMesh = MeshResource.generateBox(width: wallDepth, height: wallHeight, depth: depth)
+        let rightWall = ModelEntity(mesh: rightWallMesh, materials: [wallMaterial])
+        rightWall.position = [halfWidth + wallDepth / 2, wallHeight / 2, 0]
+        rightWall.name = "RightWall"
+        tileEntity.addChild(rightWall)
+
+        return tileEntity
     }
 }
