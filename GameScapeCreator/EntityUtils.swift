@@ -103,6 +103,28 @@ struct EntityUtils {
         
         return SIMD3(middleX, middleY, middleZ)
     }
+
+    /// Elevated position from centroid of horizontal plane
+    static func getCentroidAttachmentPosition(of entity: ModelEntity) -> SIMD3<Float>? {
+        guard let bounds = entity.model?.mesh.bounds else {
+            print("Error: ModelEntity does not have a valid bounding box.")
+            return nil
+        }
+
+        let minX = bounds.min.x
+        let maxX = bounds.max.x
+        let middleX = (minX + maxX) / 2
+        
+        let minY = bounds.min.y
+        let maxY = bounds.max.y
+        let middleY = (minY + maxY) / 2
+        
+        let minZ = bounds.min.z
+        let maxZ = bounds.max.z
+        let middleZ = (minZ + maxZ) / 2
+        
+        return SIMD3(middleX, middleY + 1, middleZ)
+    }
     
     /// Right panel position for store views
     static func getRightPanelPosition(of entity: ModelEntity) -> SIMD3<Float>? {

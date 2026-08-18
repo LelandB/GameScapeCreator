@@ -17,8 +17,8 @@ struct ContentView: View {
                 Text("Click to open Immersive Space and specify game area.")
                 
                 ToggleImmersiveSpaceButton()
-                TogglePlaneLockButton()
-                FillLockedPlaneWithCubesButton()
+//                TogglePlaneLockButton()
+//                FillLockedPlaneWithCubesButton()
         }
         .padding()
     }

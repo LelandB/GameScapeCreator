@@ -45,6 +45,10 @@ struct PlaneLockComponent: Component {
     var isPlaneLocked: Bool = false
 }
 
+struct PlaneVerticesComponent: Component {
+    var cubesOnVertices: Bool = false
+}
+
 //extension Entity {
 //    /// Simple boolean interface backed by the presence of PlaneLockComponent
 //    var isPlaneLocked: Bool {
@@ -78,6 +82,22 @@ extension Entity {
                 components.set(PlaneLockComponent(isPlaneLocked: true))
             } else {
                 components.remove(PlaneLockComponent.self)
+            }
+        }
+    }
+
+    var cubesOnVertices: Bool {
+        get {
+            components[PlaneVerticesComponent.self]?.cubesOnVertices ?? false
+        }
+        set {
+            if var comp = components[PlaneVerticesComponent.self] {
+                comp.cubesOnVertices = newValue
+                components.set(comp)
+            } else if newValue {
+                components.set(PlaneVerticesComponent(cubesOnVertices: true))
+            } else {
+                components.remove(PlaneVerticesComponent.self)
             }
         }
     }

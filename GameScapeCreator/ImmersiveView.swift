@@ -35,8 +35,14 @@ struct ImmersiveView: View {
                 let eventEntity = event.entity
                 let name = eventEntity.name
 
-                if name.contains("plane") {
-                    appModel.toggleRenderPlaneLock(string: name)
+                if name.contains("Plane") {
+                    if let samePlane = appModel.toggleRenderPlaneLock(string: name) {
+                        if samePlane == true {
+                            showHelloWorldAttachment = !showHelloWorldAttachment
+                        } else {
+                            showHelloWorldAttachment = true
+                        }
+                    }
                 }
             } // Registers at the end of a drag - seems to not be called on just a pinch action!
     }
@@ -48,8 +54,9 @@ struct ImmersiveView: View {
                 
                 if let helloWorldAttachment = attachments.entity(for: "HelloWorld") {
                     helloWorldAttachment.position = SIMD3<Float>(0.0, 1.2, 0.0)
-                    helloWorldAttachment.name = "Checking"
+                    helloWorldAttachment.name = "HelloWorldAttachment"
                     helloWorldAttachment.isEnabled = false
+                    helloWorldAttachment.components.set([BillboardComponent()])
                     content.add(helloWorldAttachment)
                     hWorldAttachment = helloWorldAttachment
                 }
@@ -64,24 +71,28 @@ struct ImmersiveView: View {
                 if showHelloWorldAttachment == true {
                     if let hWorldUnpacked = hWorldAttachment {
                         // sets position and rotation of the attachment to match the headset's
-                        if let planePositionHeadsetRotation = appModel.providePlaneCentroidPosition() {
-                            var adjustedPosition = planePositionHeadsetRotation.position
-                            adjustedPosition.y += 0.6
+                        // if let planePositionHeadsetRotation = appModel.providePlaneCentroidPosition() {
+                        //     var adjustedPosition = planePositionHeadsetRotation.position
+                        //     adjustedPosition.y += 0.6
                             
-                            // Extract only the Y-axis rotation
-                            let fullRotation = planePositionHeadsetRotation.rotation
-                            let yRotation = simd_quatf(angle: fullRotation.angle, axis: SIMD3<Float>(0, 1, 0))
+                        //     // Extract only the Y-axis rotation
+                        //     let fullRotation = planePositionHeadsetRotation.rotation
+                        //     let yRotation = simd_quatf(angle: fullRotation.angle, axis: SIMD3<Float>(0, 1, 0))
                             
-                            // Assign the position and rotation
-//                            hWorldUnpacked.position = headSetPositionAndRotation.position
-//                            hWorldUnpacked.orientation = headSetPositionAndRotation.rotation
-                            hWorldUnpacked.position = adjustedPosition
-                            hWorldUnpacked.orientation = yRotation
+                        //     // Assign the position and rotation
+                        //     hWorldUnpacked.position = adjustedPosition
+                        //     hWorldUnpacked.orientation = yRotation
 
-                            hWorldUnpacked.isEnabled = true
+                        //     hWorldUnpacked.isEnabled = true
+                        // } else {
+                        //     print("Failed to get headset position and rotation.")
+                        // }
+                        if let attachmentPosition = appModel.getElevatedAttachmentPosition() {
+                            hWorldUnpacked.position = attachmentPosition
                         } else {
-                            print("Failed to get headset position and rotation.")
+                            print("Failed to get attachment position for selected plane.")
                         }
+
                         hWorldUnpacked.isEnabled = true
                     } else {
                         print("No View Attachment Entity found")
